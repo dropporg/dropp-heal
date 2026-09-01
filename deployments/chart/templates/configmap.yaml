@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "heal.fullname" . }}-config
+  labels:
+    {{- include "heal.labels" . | nindent 4 }}
+data:
+  HEAL_API_LOG_LEVEL: {{ .Values.config.logLevel | quote }}
+  HEAL_API_LOG_JSON: {{ .Values.config.logJson | quote }}
+  HEAL_API_ENVIRONMENT: {{ .Values.config.environment | quote }}
+  HEAL_API_DOCS_ENABLED: {{ .Values.config.docsEnabled | quote }}
+  HEAL_API_REDOC_ENABLED: {{ .Values.config.redocEnabled | quote }}
+  HEAL_API_CORS_ORIGINS: {{ .Values.config.corsOrigins | quote }}
+
+  HEAL_API_DATABASE_HOST: {{ .Values.mysql.host | quote }}
+  HEAL_API_DATABASE_PORT: {{ .Values.mysql.port | quote }}
+  HEAL_API_DATABASE_NAME: {{ .Values.mysql.database | quote }}
+  HEAL_API_DATABASE_USER: {{ .Values.mysql.user | quote }}
+
+  HEAL_API_INFLUXDB_URL: {{ .Values.influxdb.url | quote }}
+  HEAL_API_INFLUXDB_ORG: {{ .Values.influxdb.org | quote }}
+  HEAL_API_INFLUXDB_BUCKET: {{ .Values.influxdb.bucket | quote }}
+
+  HEAL_API_CHECK_INTERVAL: {{ .Values.config.checkInterval | quote }}
+  HEAL_API_CHECK_TIMEOUT: {{ .Values.config.checkTimeout | quote }}
+  HEAL_API_CHECK_RETRIES: {{ .Values.config.checkRetries | quote }}
+  HEAL_API_ALLOW_PRIVATE_TARGETS: {{ .Values.config.allowPrivateTargets | quote }}
+  HEAL_API_SENTRY_TRACES_SAMPLE_RATE: {{ .Values.sentry.tracesSampleRate | quote }}

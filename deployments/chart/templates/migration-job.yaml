@@ -1,0 +1,68 @@
+{{- if .Values.migrations.enabled }}
+# Runs before the Deployments roll, as its own image. Application pods never
+# migrate; several replicas running `alembic upgrade` would race on the schema.
+#
+# As a pre-install hook this Job is created before the chart's ordinary
+# resources, including the ConfigMap, Secret and ServiceAccount. Using any of
+# them leaves the pod unschedulable on a first install ("configmap heal-config
+# not found", "error looking up service account") while the release reports
+# only "timeout waiting for Job". So the Job carries its own environment and
+# runs under the namespace default ServiceAccount.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "heal.fullname" . }}-migrate
+  labels:
+    {{- include "heal.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migration
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.migrations.backoffLimit }}
+  template:
+    metadata:
+      labels:
+        {{- include "heal.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: migration
+    spec:
+      restartPolicy: Never
+      # The heal-api Service would set HEAL_API_PORT, which collides with the
+      # app's HEAL_API_ config prefix. See api-deployment.yaml.
+      enableServiceLinks: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: migrate
+          image: {{ include "heal.image" (dict "root" $ "component" .Values.migrations) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # Only the database settings, listed here rather than taken from the
+          # ConfigMap. alembic needs the connection and nothing else, and the rest
+          # have defaults in the application.
+          env:
+            - name: HEAL_API_DATABASE_HOST
+              value: {{ .Values.mysql.host | quote }}
+            - name: HEAL_API_DATABASE_PORT
+              value: {{ .Values.mysql.port | quote }}
+            - name: HEAL_API_DATABASE_NAME
+              value: {{ .Values.mysql.database | quote }}
+            - name: HEAL_API_DATABASE_USER
+              value: {{ .Values.mysql.user | quote }}
+            - name: HEAL_API_DATABASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "heal.secretName" . }}
+                  key: HEAL_API_DATABASE_PASSWORD
+            {{- with (include "heal.extraEnvVars" (dict "root" $ "component" .Values.migrations)) }}
+            {{- . | nindent 12 }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.migrations.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+{{- end }}

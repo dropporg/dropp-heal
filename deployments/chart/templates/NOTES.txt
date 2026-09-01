@@ -1,0 +1,18 @@
+{{ include "heal.fullname" . }} deployed.
+
+Components:
+  api     {{ if .Values.api.enabled }}{{ include "heal.image" (dict "root" $ "component" .Values.api) }}{{ else }}disabled{{ end }}
+  worker  {{ if .Values.worker.enabled }}{{ include "heal.image" (dict "root" $ "component" .Values.worker) }} x {{ .Values.worker.replicaCount }}{{ else }}disabled{{ end }}
+  migrate {{ if .Values.migrations.enabled }}runs as a pre-install/pre-upgrade hook{{ else }}disabled{{ end }}
+
+Reach the API:
+  kubectl port-forward svc/{{ include "heal.fullname" . }}-api 8000:{{ .Values.api.service.port }}
+  curl http://localhost:8000/probe/ready
+
+Worker replicas claim targets through database leases, so each site is checked
+once per interval however many replicas run. Scale with:
+  kubectl scale deploy/{{ include "heal.fullname" . }}-worker --replicas=4
+{{- if .Values.worker.icmp.enabled }}
+
+ICMP is enabled, so worker pods request the NET_RAW capability.
+{{- end }}

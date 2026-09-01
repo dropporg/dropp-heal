@@ -1,0 +1,442 @@
+## @section Common parameters
+##
+
+## @param nameOverride Partially override the resource name
+##
+nameOverride: ""
+## @param fullnameOverride Fully override the resource name
+##
+fullnameOverride: ""
+
+## @param image.registry Registry prefixed to every component image, e.g. ghcr.io/dropp
+## @param image.pullPolicy Image pull policy for every component
+## @param image.tag Tag used when a component sets no tag of its own; defaults to the chart appVersion
+##
+image:
+  registry: ""
+  pullPolicy: IfNotPresent
+  tag: ""
+## @param imagePullSecrets Secrets used to pull the component images
+## e.g:
+## imagePullSecrets:
+##   - name: registry-credentials
+##
+imagePullSecrets: []
+
+## @param extraEnvVars Extra environment variables added to every component
+## e.g:
+## extraEnvVars:
+##   - name: HEAL_API_CHECK_TIMEOUT
+##     value: "10"
+##   - name: POD_IP
+##     valueFrom:
+##       fieldRef:
+##         fieldPath: status.podIP
+##
+extraEnvVars: []
+## @param extraSecretVars Extra sensitive values, written to the chart-managed Secret and loaded by every component
+## Ignored when secrets.existingSecret is set; put the keys in that Secret instead.
+## e.g:
+## extraSecretVars:
+##   HEAL_API_INFLUXDB_TOKEN_RO: "..."
+##
+extraSecretVars: {}
+## @param extraEnvVarsCM Name of an existing ConfigMap loaded as environment variables by every component
+##
+extraEnvVarsCM: ""
+## @param extraEnvVarsSecret Name of an existing Secret loaded as environment variables by every component
+##
+extraEnvVarsSecret: ""
+
+## @section API component
+## Serves the REST API. Stateless, so replicas scale freely.
+##
+
+api:
+  ## @param api.enabled Deploy the api component
+  ##
+  enabled: true
+  ## @param api.image.repository API image repository
+  ## @param api.image.tag API image tag; falls back to image.tag, then v plus the chart appVersion
+  ##
+  image:
+    repository: heal-api
+    tag: ""
+  ## @param api.replicaCount Number of api replicas; ignored when autoscaling is enabled
+  ##
+  replicaCount: 3
+  ## @param api.service.type API service type
+  ## @param api.service.port API service port
+  ##
+  service:
+    type: ClusterIP
+    port: 80
+  ## @param api.autoscaling.enabled Enable the HorizontalPodAutoscaler for the api
+  ## @param api.autoscaling.minReplicas Lower bound for api replicas
+  ## @param api.autoscaling.maxReplicas Upper bound for api replicas
+  ## @param api.autoscaling.targetCPUUtilizationPercentage Target average CPU utilisation
+  ##
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+  ## @param api.podDisruptionBudget.enabled Create a PodDisruptionBudget for the api
+  ## @param api.podDisruptionBudget.minAvailable Minimum api pods kept available during disruption
+  ##
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  ## @param api.resources.requests.cpu CPU request for the api container
+  ## @param api.resources.requests.memory Memory request for the api container
+  ## @param api.resources.limits.memory Memory limit for the api container
+  ##
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+  ## @param api.extraEnvVars Extra environment variables for the api component only
+  ##
+  extraEnvVars: []
+  ## @param api.podAnnotations Extra annotations for api pods
+  ##
+  podAnnotations: {}
+  ## @param api.nodeSelector Node labels for api pod assignment
+  ##
+  nodeSelector: {}
+  ## @param api.tolerations Tolerations for api pods
+  ##
+  tolerations: []
+  ## @param api.affinity Affinity rules for api pods
+  ##
+  affinity: {}
+
+## @section Dashboard component
+## The web UI. Serves its own pages and proxies /api to the api component, so
+## the browser only ever talks to the dashboard's origin.
+##
+
+dashboard:
+  ## @param dashboard.enabled Deploy the dashboard component
+  ##
+  enabled: true
+  ## @param dashboard.image.repository Dashboard image repository
+  ## @param dashboard.image.tag Dashboard image tag; falls back to image.tag, then v plus the chart appVersion
+  ##
+  image:
+    repository: heal-dashboard
+    tag: ""
+  ## @param dashboard.replicaCount Number of dashboard replicas; ignored when autoscaling is enabled
+  ##
+  replicaCount: 2
+  ## @param dashboard.service.type Dashboard service type
+  ## @param dashboard.service.port Dashboard service port
+  ##
+  service:
+    type: ClusterIP
+    port: 80
+  ## @param dashboard.apiUrl URL the dashboard proxies /api to; defaults to the in-cluster api service
+  ##
+  apiUrl: ""
+  ## @param dashboard.autoscaling.enabled Enable the HorizontalPodAutoscaler for the dashboard
+  ## @param dashboard.autoscaling.minReplicas Lower bound for dashboard replicas
+  ## @param dashboard.autoscaling.maxReplicas Upper bound for dashboard replicas
+  ## @param dashboard.autoscaling.targetCPUUtilizationPercentage Target average CPU utilisation
+  ##
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+  ## @param dashboard.podDisruptionBudget.enabled Create a PodDisruptionBudget for the dashboard
+  ## @param dashboard.podDisruptionBudget.minAvailable Minimum dashboard pods kept available during disruption
+  ##
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  ## @param dashboard.resources.requests.cpu CPU request for the dashboard container
+  ## @param dashboard.resources.requests.memory Memory request for the dashboard container
+  ## @param dashboard.resources.limits.memory Memory limit for the dashboard container
+  ##
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+  ## @param dashboard.extraEnvVars Extra environment variables for the dashboard component only
+  ##
+  extraEnvVars: []
+  ## @param dashboard.podAnnotations Extra annotations for dashboard pods
+  ##
+  podAnnotations: {}
+  ## @param dashboard.nodeSelector Node labels for dashboard pod assignment
+  ##
+  nodeSelector: {}
+  ## @param dashboard.tolerations Tolerations for dashboard pods
+  ##
+  tolerations: []
+  ## @param dashboard.affinity Affinity rules for dashboard pods
+  ##
+  affinity: {}
+
+## @section Worker component
+## Runs the monitoring engine. Replicas claim sites through database leases, so
+## each site is checked once per interval however many replicas run.
+##
+
+worker:
+  ## @param worker.enabled Deploy the worker component
+  ##
+  enabled: true
+  ## @param worker.image.repository Worker image repository
+  ## @param worker.image.tag Worker image tag; falls back to image.tag, then v plus the chart appVersion
+  ##
+  image:
+    repository: heal-worker
+    tag: ""
+  ## @param worker.replicaCount Number of worker replicas; safe to raise, targets are shared not duplicated
+  ##
+  replicaCount: 2
+  ## @param worker.podDisruptionBudget.enabled Create a PodDisruptionBudget for the worker
+  ## @param worker.podDisruptionBudget.minAvailable Minimum worker pods kept available during disruption
+  ##
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  ## @param worker.terminationGracePeriodSeconds Time the kubelet waits before SIGKILL; keep above worker.config.shutdownTimeout
+  ##
+  terminationGracePeriodSeconds: 60
+  ## @param worker.config.shutdownTimeout Seconds allowed for in-flight checks to drain on SIGTERM
+  ## @param worker.config.leaseSeconds Lease duration for a claimed site; must exceed the worst-case time to check one site
+  ## @param worker.config.claimBatchSize Sites claimed per scheduler tick
+  ## @param worker.config.concurrency Checks a single worker runs at once
+  ##
+  config:
+    shutdownTimeout: 45
+    leaseSeconds: 120
+    claimBatchSize: 50
+    concurrency: 50
+  ## @param worker.icmp.enabled Enable ICMP probes; adds the NET_RAW capability the default security context drops
+  ##
+  icmp:
+    enabled: false
+  ## @param worker.resources.requests.cpu CPU request for the worker container
+  ## @param worker.resources.requests.memory Memory request for the worker container
+  ## @param worker.resources.limits.memory Memory limit for the worker container
+  ##
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      memory: 1Gi
+  ## @param worker.extraEnvVars Extra environment variables for the worker component only
+  ##
+  extraEnvVars: []
+  ## @param worker.podAnnotations Extra annotations for worker pods
+  ##
+  podAnnotations: {}
+  ## @param worker.nodeSelector Node labels for worker pod assignment
+  ##
+  nodeSelector: {}
+  ## @param worker.tolerations Tolerations for worker pods
+  ##
+  tolerations: []
+  ## @param worker.affinity Affinity rules for worker pods
+  ##
+  affinity: {}
+
+## @section Migration component
+## Applies Alembic revisions as a pre-install/pre-upgrade hook. Application pods
+## never migrate: concurrent replicas would race on the schema.
+##
+
+migrations:
+  ## @param migrations.enabled Run the migration Job on install and upgrade
+  ##
+  enabled: true
+  ## @param migrations.image.repository Migration image repository
+  ## @param migrations.image.tag Migration image tag; falls back to image.tag, then v plus the chart appVersion
+  ##
+  image:
+    repository: heal-migrate
+    tag: ""
+  ## @param migrations.backoffLimit Retries before the migration Job is marked failed
+  ##
+  backoffLimit: 3
+  ## @param migrations.resources.requests.cpu CPU request for the migration container
+  ## @param migrations.resources.requests.memory Memory request for the migration container
+  ## @param migrations.resources.limits.memory Memory limit for the migration container
+  ##
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+  ## @param migrations.extraEnvVars Extra environment variables for the migration Job only
+  ##
+  extraEnvVars: []
+
+## @section Application configuration
+##
+
+config:
+  ## @param config.logLevel Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+  ##
+  logLevel: INFO
+  ## @param config.logJson Emit structured JSON logs
+  ##
+  logJson: true
+  ## @param config.environment Environment name reported to Sentry
+  ##
+  environment: production
+  ## @param config.checkInterval Default seconds between checks; a site may override it
+  ##
+  checkInterval: 30
+  ## @param config.checkTimeout Default per-probe timeout in seconds
+  ##
+  checkTimeout: 5
+  ## @param config.checkRetries Retries before a probe is recorded as failed
+  ##
+  checkRetries: 2
+  ## @param config.allowPrivateTargets Allow probing loopback, link-local, private and metadata addresses
+  ##
+  allowPrivateTargets: false
+  ## @param config.docsEnabled Serve the Swagger UI at /docs
+  ##
+  docsEnabled: true
+  ## @param config.redocEnabled Serve ReDoc at /redoc
+  ##
+  redocEnabled: true
+  ## @param config.corsOrigins Origins allowed to call the API from a browser, comma-separated; the dashboard needs its own origin here
+  ##
+  corsOrigins: ""
+
+## @section Datastores
+## Heal does not deploy MySQL or InfluxDB; point these at your own instances.
+##
+
+## @param mysql.host MySQL host
+## @param mysql.port MySQL port
+## @param mysql.database MySQL database name
+## @param mysql.user MySQL user
+##
+mysql:
+  host: mysql
+  port: 3306
+  database: heal
+  user: heal
+
+## @param influxdb.url InfluxDB base URL
+## @param influxdb.org InfluxDB organisation
+## @param influxdb.bucket InfluxDB bucket holding probe measurements
+##
+influxdb:
+  url: http://influxdb:8086
+  org: heal
+  bucket: heal
+
+## @section Credentials
+##
+
+secrets:
+  ## @param secrets.existingSecret Name of an existing Secret holding the credentials; disables the chart-managed Secret
+  ## It must define HEAL_API_DATABASE_PASSWORD, HEAL_API_INFLUXDB_TOKEN and,
+  ## when Sentry is used, HEAL_API_SENTRY_DSN.
+  ##
+  existingSecret: ""
+  ## @param secrets.databasePassword MySQL password; required unless existingSecret is set
+  ##
+  databasePassword: ""
+  ## @param secrets.influxdbToken InfluxDB token; required unless existingSecret is set
+  ##
+  influxdbToken: ""
+
+## @section Observability
+##
+
+## @param sentry.dsn Sentry DSN; leave empty to disable error reporting
+## @param sentry.tracesSampleRate Fraction of transactions sent to Sentry
+##
+sentry:
+  dsn: ""
+  tracesSampleRate: 0.0
+
+metrics:
+  ## @param metrics.annotations Add Prometheus scrape annotations to every pod
+  ##
+  annotations: true
+  ## @param metrics.serviceMonitor.enabled Create a ServiceMonitor for the Prometheus Operator
+  ## @param metrics.serviceMonitor.interval Scrape interval
+  ## @param metrics.serviceMonitor.labels Extra labels so your Prometheus selects the ServiceMonitor
+  ##
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    labels: {}
+
+## @section Networking and RBAC
+##
+
+ingress:
+  ## @param ingress.enabled Create an Ingress for the api component
+  ##
+  enabled: false
+  ## @param ingress.className Ingress class name
+  ##
+  className: ""
+  ## @param ingress.annotations Ingress annotations
+  ##
+  annotations: {}
+  ## @param ingress.service Component the ingress routes to: dashboard or api
+  ##
+  service: dashboard
+  ## @param ingress.hosts Ingress hosts and paths
+  ##
+  hosts:
+    - host: heal.local
+      paths:
+        - path: /
+          pathType: Prefix
+  ## @param ingress.tls Ingress TLS configuration
+  ##
+  tls: []
+
+serviceAccount:
+  ## @param serviceAccount.create Create a ServiceAccount for the components
+  ##
+  create: true
+  ## @param serviceAccount.name ServiceAccount name; generated when empty
+  ##
+  name: ""
+  ## @param serviceAccount.annotations ServiceAccount annotations, e.g. for workload identity
+  ##
+  annotations: {}
+
+## @section Security contexts
+##
+
+## @param podSecurityContext.runAsNonRoot Refuse to run the containers as root
+## @param podSecurityContext.runAsUser UID the containers run as; matches the image user
+## @param podSecurityContext.seccompProfile.type Seccomp profile applied to the pods
+##
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+## @param securityContext.allowPrivilegeEscalation Allow privilege escalation inside the containers
+## @param securityContext.readOnlyRootFilesystem Mount the container root filesystem read-only
+## @param securityContext.capabilities.drop Linux capabilities dropped from the containers
+##
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL

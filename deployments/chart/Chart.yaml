@@ -1,0 +1,13 @@
+apiVersion: v2
+name: heal
+description: Network monitoring for FQDN availability, latency, and filtering detection
+type: application
+version: __chartVersion__
+appVersion: __appVersion__
+keywords:
+  - monitoring
+  - latency
+  - networking
+home: https://github.com/dropporg/dropp-heal
+sources:
+  - https://github.com/dropporg/dropp-heal

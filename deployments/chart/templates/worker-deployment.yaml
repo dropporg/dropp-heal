@@ -1,0 +1,108 @@
+{{- if .Values.worker.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "heal.fullname" . }}-worker
+  labels:
+    {{- include "heal.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  # Replicas share targets through database leases, so this scales safely.
+  replicas: {{ .Values.worker.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "heal.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: worker
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        {{- include "heal.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: worker
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- include "heal.metricsAnnotations" . | nindent 8 }}
+        {{- with .Values.worker.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      # The heal-api Service would set HEAL_API_PORT, which collides with the
+      # app's HEAL_API_ config prefix. See api-deployment.yaml.
+      enableServiceLinks: false
+      serviceAccountName: {{ include "heal.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # Long enough for the scheduler to finish in-flight checks and release
+      # their leases before the kubelet sends SIGKILL.
+      terminationGracePeriodSeconds: {{ .Values.worker.terminationGracePeriodSeconds }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: worker
+          image: {{ include "heal.image" (dict "root" $ "component" .Values.worker) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            # Names the lease holder, so locked_by points at a real pod.
+            - name: HEAL_API_WORKER_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: HEAL_API_SHUTDOWN_TIMEOUT
+              value: {{ .Values.worker.config.shutdownTimeout | quote }}
+            - name: HEAL_API_LEASE_SECONDS
+              value: {{ .Values.worker.config.leaseSeconds | quote }}
+            - name: HEAL_API_CLAIM_BATCH_SIZE
+              value: {{ .Values.worker.config.claimBatchSize | quote }}
+            - name: HEAL_API_WORKER_CONCURRENCY
+              value: {{ .Values.worker.config.concurrency | quote }}
+            - name: HEAL_API_ICMP_ENABLED
+              value: {{ .Values.worker.icmp.enabled | quote }}
+            {{- with (include "heal.extraEnvVars" (dict "root" $ "component" .Values.worker)) }}
+            {{- . | nindent 12 }}
+            {{- end }}
+          envFrom:
+            {{- include "heal.envFrom" . | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 8000
+          # Worker pods serve health and metrics only, never the REST API.
+          livenessProbe:
+            httpGet:
+              path: /probe/live
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /probe/ready
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+            {{- if .Values.worker.icmp.enabled }}
+            capabilities:
+              # ICMP echo requests need a raw socket.
+              add: ["NET_RAW"]
+              drop: ["ALL"]
+            {{- end }}
+      {{- with .Values.worker.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.worker.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.worker.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}
