@@ -1,0 +1,38 @@
+# Heal API: serves the REST API. Stateless, scales horizontally.
+# Build from the repository root:
+#   docker build -f deployments/docker/Dockerfile.api -t heal-api .
+
+FROM python:3.13-slim AS builder
+
+WORKDIR /build
+COPY requirements.txt .
+RUN python -m venv /opt/venv \
+    && /opt/venv/bin/pip install --no-cache-dir --upgrade pip \
+    && /opt/venv/bin/pip install --no-cache-dir -r requirements.txt
+
+
+FROM python:3.13-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends tini curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 10001 heal
+
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+WORKDIR /app
+COPY --chown=heal:heal main.py ./
+COPY --chown=heal:heal api ./api
+
+USER heal
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -fsS http://localhost:8000/probe/live || exit 1
+
+# tini reaps zombies and forwards SIGTERM for a clean shutdown.
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

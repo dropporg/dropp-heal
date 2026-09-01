@@ -1,0 +1,126 @@
+# Full local stack. Use docker-compose.infra.yml to run only the datastores.
+
+# Pinned so volumes survive a rename of the directory.
+name: heal
+
+x-app-env: &app-env
+  HEAL_API_LOG_LEVEL: DEBUG
+  HEAL_API_LOG_JSON: "false"
+  HEAL_API_ENVIRONMENT: development
+  HEAL_API_DATABASE_HOST: mysql
+  HEAL_API_DATABASE_PORT: "3306"
+  HEAL_API_DATABASE_NAME: heal
+  HEAL_API_DATABASE_USER: heal
+  HEAL_API_DATABASE_PASSWORD: heal
+  HEAL_API_INFLUXDB_URL: http://influxdb:8086
+  HEAL_API_INFLUXDB_TOKEN: heal-dev-token
+  HEAL_API_INFLUXDB_ORG: heal
+  HEAL_API_INFLUXDB_BUCKET: heal
+  HEAL_API_CHECK_INTERVAL: "30"
+
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: heal
+      MYSQL_USER: heal
+      MYSQL_PASSWORD: heal
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uheal", "-pheal"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  influxdb:
+    image: influxdb:2.7
+    restart: unless-stopped
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: heal
+      DOCKER_INFLUXDB_INIT_PASSWORD: healheal
+      DOCKER_INFLUXDB_INIT_ORG: heal
+      DOCKER_INFLUXDB_INIT_BUCKET: heal
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: heal-dev-token
+    ports:
+      - "8086:8086"
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+      - influxdb-config:/etc/influxdb2
+    healthcheck:
+      test: ["CMD", "influx", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  migrate:
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile.migrate
+    image: heal-migrate:latest
+    environment:
+      <<: *app-env
+    depends_on:
+      mysql:
+        condition: service_healthy
+    restart: on-failure
+
+  api:
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile.api
+    image: heal-api:latest
+    restart: unless-stopped
+    environment:
+      <<: *app-env
+    ports:
+      - "8000:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      influxdb:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile.worker
+    image: heal-worker:latest
+    restart: unless-stopped
+    environment:
+      <<: *app-env
+      HEAL_API_WORKER_CONCURRENCY: "20"
+      HEAL_API_CLAIM_BATCH_SIZE: "25"
+      HEAL_API_SHUTDOWN_TIMEOUT: "15"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      influxdb:
+        condition: service_healthy
+    # Above HEAL_API_SHUTDOWN_TIMEOUT so in-flight checks drain on stop.
+    stop_grace_period: 30s
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: deployments/docker/Dockerfile.dashboard
+    image: heal-dashboard:latest
+    restart: unless-stopped
+    environment:
+      HEAL_API_URL: http://api:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+volumes:
+  mysql-data:
+  influxdb-data:
+  influxdb-config:

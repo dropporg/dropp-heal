@@ -1,0 +1,49 @@
+# Heal dashboard: the web UI. Serves its own pages and proxies /api to the Heal
+# API, so the browser only ever talks to this origin.
+# Build from the repository root:
+#   docker build -f deployments/docker/Dockerfile.dashboard -t heal-dashboard .
+
+FROM node:24-slim AS deps
+
+WORKDIR /app
+COPY dashboard/package.json dashboard/package-lock.json ./
+RUN npm ci
+
+
+FROM node:24-slim AS builder
+
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY dashboard/ ./
+ENV NEXT_TELEMETRY_DISABLED=1
+# The API URL is read at runtime by the rewrite, not baked in here, so one
+# image runs against any environment.
+RUN npm run build
+
+
+FROM node:24-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends tini curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 10001 heal
+
+WORKDIR /app
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    PORT=3000 \
+    HOSTNAME=0.0.0.0
+
+# The standalone build carries only the modules the server actually needs.
+COPY --from=builder --chown=heal:heal /app/.next/standalone ./
+COPY --from=builder --chown=heal:heal /app/.next/static ./.next/static
+COPY --from=builder --chown=heal:heal /app/public ./public
+
+USER heal
+EXPOSE 3000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -fsS http://localhost:3000/ || exit 1
+
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["node", "server.js"]
