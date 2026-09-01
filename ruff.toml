@@ -1,0 +1,36 @@
+# Pinned rule set so a new ruff release cannot change what CI enforces.
+line-length = 99
+target-version = "py313"
+
+[lint]
+select = [
+    "E",    # pycodestyle
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # import order
+    "UP",   # pyupgrade
+    "B",    # bugbear
+    "SIM",  # simplifiable code
+    "ASYNC",# async pitfalls
+    "RUF",  # ruff-specific
+]
+ignore = [
+    # FastAPI declares dependencies and query parameters as argument defaults;
+    # this is the framework's documented pattern, not a mutable-default bug.
+    "B008",
+    # Line length is black's job, and it leaves long strings alone on purpose.
+    "E501",
+    # `timeout` parameters here are part of the probe and scheduler contracts,
+    # configured per site rather than imposed by the caller's own deadline.
+    "ASYNC109",
+]
+
+[lint.per-file-ignores]
+# Alembic writes these; keep them as generated so re-running autogenerate does
+# not produce a diff against our own edits.
+"migrations/versions/*" = ["I001", "UP035", "UP007"]
+# Tests reach into internals deliberately.
+"tests/*" = ["SIM117"]
+
+[lint.isort]
+known-first-party = ["api"]

@@ -1,0 +1,26 @@
+# Secret scanning configuration. Start from the shipped rules and narrow what
+# gets scanned, rather than loosening the rules themselves.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Generated output and vendored dependencies"
+paths = [
+  # Next.js writes randomly generated preview and encryption keys into its
+  # build output. None of it is committed.
+  '''dashboard/\.next/''',
+  '''dashboard/node_modules/''',
+  '''venv/''',
+]
+
+[[allowlists]]
+description = "Documented throwaway values for the local stack"
+# Allowlisted by value rather than by file, so a real credential pasted into
+# .env.example or a compose file is still reported.
+regexes = [
+  # The local InfluxDB token, which matches docker-compose.infra.yml.
+  '''heal-dev-token''',
+  # An early .env.example left the token empty, so the generic-api-key rule
+  # matched across the newline onto the organisation name below it.
+  '''HEAL_API_INFLUXDB_ORG=heal''',
+]
