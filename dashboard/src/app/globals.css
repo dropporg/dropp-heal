@@ -1,0 +1,105 @@
+@import "tailwindcss";
+
+/*
+  Heal reads like an instrument panel printed on engineering paper: a cool
+  paper ground, navy ink, and hairline rules. Signal colours encode certainty,
+  not just severity - a suspicion must never look like a confirmed outage.
+*/
+:root {
+  --paper: #eaeef4;
+  --surface: #ffffff;
+  --surface-sunk: #f4f6fa;
+  --ink: #0f1830;
+  --ink-muted: #5b667e;
+  --ink-faint: #93a0b8;
+  --rule: #d2dae7;
+  --rule-strong: #b9c4d6;
+
+  --signal-good: #0e8a78;
+  --signal-warn: #bd7708;
+  --signal-fail: #c02c39;
+  --signal-suspect: #6f42d4;
+  --signal-idle: #a9b4c8;
+
+  --font-display: var(--font-plex-condensed), "Arial Narrow", sans-serif;
+  --font-body: var(--font-plex-sans), system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, monospace;
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-surface: var(--surface);
+  --color-sunk: var(--surface-sunk);
+  --color-ink: var(--ink);
+  --color-muted: var(--ink-muted);
+  --color-faint: var(--ink-faint);
+  --color-rule: var(--rule);
+  --color-good: var(--signal-good);
+  --color-warn: var(--signal-warn);
+  --color-fail: var(--signal-fail);
+  --color-suspect: var(--signal-suspect);
+  --font-display: var(--font-display);
+  --font-sans: var(--font-body);
+  --font-mono: var(--font-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #0c1018;
+    --surface: #131926;
+    --surface-sunk: #0f1420;
+    --ink: #e7ecf5;
+    --ink-muted: #97a3ba;
+    --ink-faint: #64708a;
+    --rule: #232c3d;
+    --rule-strong: #33405a;
+
+    --signal-good: #35b8a0;
+    --signal-warn: #e0a020;
+    --signal-fail: #f0616e;
+    --signal-suspect: #a483f5;
+    --signal-idle: #46516a;
+  }
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Panel headings sit on the rule like a label stamped on an instrument. */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+}
+
+.tabular {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+a:focus-visible,
+button:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--signal-suspect);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
