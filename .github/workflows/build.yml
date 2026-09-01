@@ -1,0 +1,190 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    # <component>/<version>, e.g. api/v0.1.0 or migrate/1.0.0-beta.1
+    tags:
+      - "api/*"
+      - "worker/*"
+      - "dashboard/*"
+      - "migrate/*"
+
+  # Build on demand, without having to touch a component's files.
+  workflow_dispatch:
+    inputs:
+      component:
+        description: Component to build
+        type: choice
+        default: all
+        options: [all, api, worker, dashboard, migrate]
+      version:
+        description: "Image tag to publish; defaults to the commit sha"
+        type: string
+        default: ""
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  plan:
+    name: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      components: ${{ steps.select.outputs.components }}
+      version: ${{ steps.select.outputs.version }}
+      image_tags: ${{ steps.select.outputs.image_tags }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Needed to diff this push against what was already on the branch.
+          fetch-depth: 0
+
+      - name: Select components and version
+        id: select
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            .github/scripts/select-build.sh manual \
+              "${{ inputs.component }}" "${{ github.sha }}" \
+              "${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.ref_type }}" = "tag" ]; then
+            # A tag names exactly one component and pins its version.
+            .github/scripts/select-build.sh tag "${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          else
+            before="${{ github.event.before }}"
+            # A new branch, or a force push, reports an empty before-sha.
+            if [ -z "$before" ] || [ "$before" = "0000000000000000000000000000000000000000" ] \
+               || ! git cat-file -e "$before^{commit}" 2>/dev/null; then
+              before="$(git rev-parse HEAD^ 2>/dev/null || true)"
+            fi
+            if [ -n "$before" ]; then
+              changed="$(git diff --name-only "$before" "${{ github.sha }}")"
+            else
+              # No parent to compare against: build everything.
+              changed="api/ worker.py dashboard/ migrations/"
+            fi
+            printf '%s\n' "$changed" \
+              | .github/scripts/select-build.sh branch "${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          fi
+          cat "$GITHUB_OUTPUT"
+
+          # Say what was decided and why, so a run with no images is not
+          # mistaken for a broken workflow.
+          components="$(grep '^components=' "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2-)"
+          {
+            echo "### Build plan"
+            echo
+            echo "Components: \`$components\`"
+            if [ -n "${changed:-}" ]; then
+              echo
+              echo "Changed paths:"
+              while IFS= read -r path; do
+                [ -n "$path" ] && echo "- \`$path\`"
+              done <<<"$changed"
+              if [ "$components" = '["none"]' ]; then
+                echo
+                echo "No image contains these paths, so nothing was built."
+              fi
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  image:
+    # "none" means this push changed no component. The job still runs and
+    # succeeds, so a required status check has something to report.
+    name: ${{ matrix.component == 'none' && 'nothing to build' || matrix.component }}
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        component: ${{ fromJSON(needs.plan.outputs.components) }}
+    env:
+      # Publishing is gated on the CI_TESTING_ENABLED repository variable, so
+      # it can be turned off without editing this workflow. Unset counts as
+      # enabled, so publishing does not stop silently if the variable is
+      # removed.
+      CI_TESTING_ENABLED: ${{ vars.CI_TESTING_ENABLED == '' && 'true' || vars.CI_TESTING_ENABLED }}
+      SHOULD_BUILD: ${{ (vars.CI_TESTING_ENABLED == '' || vars.CI_TESTING_ENABLED == 'true') && matrix.component != 'none' }}
+
+    steps:
+      - name: Publishing disabled
+        if: env.CI_TESTING_ENABLED != 'true'
+        run: |
+          echo "CI_TESTING_ENABLED is \`$CI_TESTING_ENABLED\`, so no image was built or pushed." \
+            >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Nothing to build
+        if: matrix.component == 'none'
+        run: |
+          echo "This push changed no component, so no image was built." \
+            >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/checkout@v4
+        if: env.SHOULD_BUILD == 'true'
+
+      - name: Resolve image tags
+        if: env.SHOULD_BUILD == 'true'
+        id: image
+        run: |
+          set -euo pipefail
+          owner="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+          name="ghcr.io/${owner}/heal-${{ matrix.component }}"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+
+          # A commit sha on every build, plus nightly on a branch push or the
+          # version and latest on a release tag.
+          {
+            echo "tags<<EOF"
+            IFS=',' read -ra tags <<<"${{ needs.plan.outputs.image_tags }}"
+            for tag in "${tags[@]}"; do
+              echo "${name}:${tag}"
+            done
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+        if: env.SHOULD_BUILD == 'true'
+
+      - uses: docker/login-action@v3
+        if: env.SHOULD_BUILD == 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # On a branch push the tag is the commit sha; on a tag push it is the
+      # version after the slash, so migrate/1.0.0-beta.1 publishes
+      # heal-migrate:1.0.0-beta.1.
+      - name: Build and push
+        if: env.SHOULD_BUILD == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deployments/docker/Dockerfile.${{ matrix.component }}
+          push: true
+          tags: ${{ steps.image.outputs.tags }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.plan.outputs.version }}
+          cache-from: type=gha,scope=${{ matrix.component }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.component }}
+
+      - name: Summary
+        if: env.SHOULD_BUILD == 'true'
+        run: |
+          {
+            echo "Pushed:"
+            echo '```'
+            echo "${{ steps.image.outputs.tags }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

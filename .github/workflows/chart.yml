@@ -1,0 +1,139 @@
+name: Chart
+
+on:
+  push:
+    branches: [main]
+    # <component>/<version>, matching the image tags: helm/v0.1.0
+    tags:
+      - "helm/*"
+      # The product-wide version, stamped into the chart as appVersion.
+      - "release/*"
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Chart version to publish, e.g. 0.2.0"
+        type: string
+        required: true
+
+concurrency:
+  # Publishing rewrites one branch, so these must not overlap.
+  group: chart-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  chart:
+    name: chart
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      # Publishing commits the packaged chart to the gh-pages branch.
+      contents: write
+    env:
+      CHART_DIR: deployments/chart
+      # Charts publish to the same switch as the images. Unset counts as
+      # enabled.
+      CI_TESTING_ENABLED: ${{ vars.CI_TESTING_ENABLED == '' && 'true' || vars.CI_TESTING_ENABLED }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The app version comes from the newest release/* tag.
+          fetch-depth: 0
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.20.2
+
+      - name: Resolve versions
+        id: version
+        run: |
+          set -euo pipefail
+          .github/scripts/chart-version.sh \
+            "${{ github.ref_name }}" "${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          cat "$GITHUB_OUTPUT"
+
+      # Chart.yaml ships with placeholders; helm rejects them, so stamp the
+      # resolved versions in before linting.
+      - name: Stamp Chart.yaml
+        run: |
+          set -euo pipefail
+          sed -i \
+            -e "s|__chartVersion__|${{ steps.version.outputs.chart_version }}|" \
+            -e "s|__appVersion__|${{ steps.version.outputs.app_version }}|" \
+            "$CHART_DIR/Chart.yaml"
+          helm show chart "$CHART_DIR" | grep -E '^(version|appVersion):'
+          {
+            echo "### Chart"
+            echo
+            echo "- chart version: \`${{ steps.version.outputs.chart_version }}\`"
+            echo "- app version: \`${{ steps.version.outputs.app_version }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Lint
+        run: helm lint --strict "$CHART_DIR" --set secrets.databasePassword=lint --set secrets.influxdbToken=lint
+
+      # Rendering catches template errors that linting alone lets through.
+      - name: Render
+        run: |
+          helm template heal "$CHART_DIR" \
+            --set secrets.databasePassword=render \
+            --set secrets.influxdbToken=render > /tmp/rendered.yaml
+          grep -c '^kind:' /tmp/rendered.yaml
+
+      - name: Package
+        run: |
+          mkdir -p .cr-release-packages
+          helm package "$CHART_DIR" --destination .cr-release-packages
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: heal-chart-${{ steps.version.outputs.chart_version }}
+          path: .cr-release-packages/*.tgz
+
+      # A plain HTTP chart repository on GitHub Pages: index.yaml plus the
+      # packaged charts, served from the gh-pages branch. Not an OCI registry,
+      # so `helm repo add` works without a login.
+      - name: Publish to the chart repository
+        if: steps.version.outputs.publish == 'true' && env.CI_TESTING_ENABLED == 'true'
+        env:
+          PAGES_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
+        run: |
+          set -euo pipefail
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git ls-remote --exit-code --heads origin gh-pages >/dev/null 2>&1; then
+            git fetch origin gh-pages --depth 1
+            git worktree add pages origin/gh-pages
+            git -C pages switch -c gh-pages origin/gh-pages 2>/dev/null || git -C pages switch gh-pages
+          else
+            # First publish: start the branch with no history of its own.
+            git worktree add --detach pages
+            git -C pages switch --orphan gh-pages
+            git -C pages rm -rq --ignore-unmatch .
+            touch pages/.nojekyll
+          fi
+
+          cp .cr-release-packages/*.tgz pages/
+
+          if [ -f pages/index.yaml ]; then
+            helm repo index pages --url "$PAGES_URL" --merge pages/index.yaml
+          else
+            helm repo index pages --url "$PAGES_URL"
+          fi
+
+          cd pages
+          git add .
+          git commit -m "chart: publish heal ${{ steps.version.outputs.chart_version }}"
+          git push origin gh-pages
+          echo "Published to $PAGES_URL" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publishing skipped
+        if: steps.version.outputs.publish != 'true' || env.CI_TESTING_ENABLED != 'true'
+        run: |
+          echo "Packaged but not published. Tag \`helm/vX.Y.Z\` to release." \
+            >> "$GITHUB_STEP_SUMMARY"
